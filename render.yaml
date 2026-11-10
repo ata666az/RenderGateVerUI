@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: atarenver
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: SERVERVPN_ORIGIN
+        value: https://atavpnvercel.vercel.app
+      - key: VPN_UUID
+        value: d1cf4b9c-3e57-085d-b34a-797fcf601381
+      - key: VPN_WS_PATH
+        value: /d1cf4b9c
+      - key: DEFAULT_ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

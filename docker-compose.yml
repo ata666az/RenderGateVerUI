@@ -1,0 +1,37 @@
+services:
+  atarenver-gate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: atarenver-gate
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+    environment:
+      NODE_ENV: production
+      PORT: "10000"
+      DATA_DIR: "/app/data"
+      SERVERVPN_ORIGIN: "https://atavpnvercel.vercel.app"
+      VPN_UUID: "d1cf4b9c-3e57-085d-b34a-797fcf601381"
+      VPN_WS_PATH: "/d1cf4b9c"
+      DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-CHANGE-ME-ADMIN-PASSWORD}"
+      SESSION_SECRET: "${SESSION_SECRET:-CHANGE-ME-LONG-RANDOM-SECRET}"
+    volumes:
+      - atarenver_data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:10000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 10s
+
+volumes:
+  atarenver_data:
+    name: atarenver-gate-data
