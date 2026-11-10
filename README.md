@@ -1,44 +1,78 @@
-# Atarenver Gate (Render)
+# Atarenver Gate 2.1 — Render Multi-Protocol + Automatic Failover
 
-Gate ini menjadi domain publik untuk klien VPN sekaligus generator akun VLESS. Semua koneksi WebSocket diteruskan ke satu backend ServerVPN di Vercel.
+Gate ini menjadi domain publik klien VPN. Klien selalu terhubung ke domain Render; Gate meneruskan koneksi WebSocket ke backend yang tersedia dengan urutan **Vercel utama → 3 backend Wasmer cadangan**.
 
-## Konfigurasi default
+## Backend default
+
+| Prioritas | Backend | Peran |
+|---:|---|---|
+| 1 | `atavpnvercel.vercel.app` | Primary — Vercel |
+| 2 | `atawsn.wasmer.app` | Fallback 1 — Wasmer |
+| 3 | `atapyv.wasmer.app` | Fallback 2 — Wasmer |
+| 4 | `node-base-ad688.wasmer.app` | Fallback 3 — Wasmer |
+
+Gate mencoba Vercel terlebih dahulu. Jika koneksi WebSocket ditolak, timeout, gagal jaringan, menerima HTTP 429 (rate limit), atau 5xx, backend tersebut dimasukkan cooldown 90 detik dan Gate mencoba backend berikutnya. Backend yang berhasil akan dipakai. HTTP forwarding juga berpindah backend untuk 408, 425, 429, 5xx dan error jaringan.
+
+Pada koneksi yang sudah aktif, Gate tidak dapat memindahkan stream TCP/VPN yang sedang berjalan ke backend lain tanpa memutus sesi karena status koneksi sudah berada di backend lama. Jika upstream memutus WebSocket secara abnormal, Gate menandai backend tersebut cooldown dan menutup koneksi klien dengan kode reconnect; koneksi klien berikutnya akan memilih backend cadangan. Jadi failover terjadi saat handshake/koneksi baru, bukan migrasi sesi aktif tanpa putus.
+
+## Protokol dan autentikasi
+
+Gate mengeluarkan tiga format akun dari generator:
+
+- **VLESS** — UUID ServerVPN sebagai ID.
+- **Trojan** — UUID ServerVPN sebagai password Trojan.
+- **Shadowsocks** — metode `none`, password UUID, transport `v2ray-plugin` melalui WebSocket TLS.
+
+Ketiganya memakai hostname publik Render, port `443`, TLS, WebSocket path `/d1cf4b9c`, dan host/SNI domain Render. Ini mengikuti `index.js` ServerVPN yang disertakan: server mengenali VLESS, Trojan, dan Shadowsocks pada WebSocket path yang sama. Pastikan ketiga Wasmer backend juga menjalankan konfigurasi UUID dan WSPATH yang sama.
+
+Default credential/path:
 
 | Environment | Nilai |
 |---|---|
 | `SERVERVPN_ORIGIN` | `https://atavpnvercel.vercel.app` |
+| `FALLBACK_BACKENDS` | `atawsn.wasmer.app,atapyv.wasmer.app,node-base-ad688.wasmer.app` |
 | `VPN_UUID` | `d1cf4b9c-3e57-085d-b34a-797fcf601381` |
 | `VPN_WS_PATH` | `/d1cf4b9c` |
-| `PORT` | Disediakan Render (Docker default 10000) |
-| `DEFAULT_ADMIN_PASSWORD` | Wajib diatur sendiri di Render |
-| `SESSION_SECRET` | Dibuat otomatis oleh `render.yaml` atau diatur manual |
+| `PORT` | Diisi Render (default Docker `10000`) |
+| `DEFAULT_ADMIN_PASSWORD` | Atur password admin kuat di Render |
+| `SESSION_SECRET` | Dibuat otomatis oleh Blueprint atau atur sendiri |
 
-UUID dan path harus sama dengan `UUID` dan `WSPATH` di ServerVPN. Pada script ServerVPN yang diberikan, nilai default keduanya memang cocok: UUID `d1cf4b9c-3e57-085d-b34a-797fcf601381` dan path `/d1cf4b9c`.
+`FALLBACK_BACKENDS` bisa diisi hostname dipisahkan koma. Semua backend wajib memakai HTTPS/WSS dan path/UUID yang sama. Urutan nilai menentukan prioritas.
 
 ## Deploy ke Render
 
-1. Push isi folder ini ke repository GitHub.
-2. Di Render pilih **New > Blueprint** bila menggunakan `render.yaml`, atau **New > Web Service** dan pilih runtime Docker.
-3. Gunakan nama service `atarenver`. Domain publik akan diberikan oleh Render; generator membaca hostname dari request sehingga tidak perlu menuliskan domain Render secara manual.
-4. Isi `DEFAULT_ADMIN_PASSWORD` dengan password admin yang kuat. `SESSION_SECRET` dibuat otomatis melalui Blueprint.
-5. Pastikan health check menggunakan `/health`.
+1. Push isi folder ZIP ini ke repository GitHub.
+2. Di Render pilih **New → Blueprint** untuk memakai `render.yaml`, atau buat Web Service dengan runtime Docker.
+3. Nama service: `atarenver`. Domain publik akan diberikan Render; generator otomatis memakai hostname dari request klien.
+4. Isi `DEFAULT_ADMIN_PASSWORD` dan `SESSION_SECRET` sesuai kebutuhan. Jangan memakai password default.
+5. Health check path: `/health`.
 
 ## Endpoint
 
-- `/` — halaman status Gate.
-- `/sub` — halaman generator VLESS.
-- `/sub.txt` — satu baris URI VLESS plain text.
-- `/health` — status proses Gate dan target backend yang dikunci.
-- `/admin` — pemeriksaan backend dan penggantian password admin.
+- `/` — status Gate.
+- `/sub` — generator visual, tombol salin untuk tiga protokol.
+- `/sub.txt` — subscription Base64 berisi tiga URI (VLESS, Trojan, SS).
+- `/sub.raw` — tiga URI dalam teks biasa.
+- `/sub.vless` — URI VLESS saja.
+- `/sub.trojan` — URI Trojan saja.
+- `/sub.ss` — URI Shadowsocks saja.
+- `/health` — status Gate dan urutan backend/cooldown.
+- `/admin` — panel admin, ubah password dan periksa semua backend.
 
-## Alur koneksi
+## Cara kerja failover
 
-Klien terhubung ke `wss://<domain-render>/d1cf4b9c`. Gate menerima TLS dari Render, lalu membuat koneksi `wss://atavpnvercel.vercel.app/d1cf4b9c` dan meneruskan frame WebSocket dua arah. Gate tidak lagi mengunduh daftar Proxy Bank, tidak lagi memakai alamat IP:port sebagai path, dan tidak membuat UUID acak.
+1. Klien membuka TLS ke domain Render dan upgrade WebSocket pada `/d1cf4b9c`.
+2. Gate mencoba `wss://atavpnvercel.vercel.app/d1cf4b9c`.
+3. Jika handshake sukses, Gate meneruskan frame dua arah melalui Vercel.
+4. Jika Vercel merespons 429/5xx, handshake gagal, timeout, atau error jaringan, Gate mencoba `atawsn.wasmer.app`, kemudian `atapyv.wasmer.app`, lalu `node-base-ad688.wasmer.app`.
+5. Backend yang gagal dihindari selama 90 detik. Setelah cooldown berakhir, Gate mencoba lagi sesuai urutan prioritas.
+6. Jika upstream aktif putus abnormal (misalnya batas durasi Function), backend itu dimasukkan cooldown. Klien perlu reconnect agar pindah ke backend cadangan.
 
-Catatan: keberhasilan deploy domain Vercel saja belum membuktikan WebSocket ServerVPN bisa menerima koneksi. Uji langsung endpoint Vercel dan pastikan project ServerVPN diekspor sebagai Vercel Function/WebSocket handler sesuai runtime Vercel yang digunakan.
+Panel `/admin` menyediakan tombol **CHECK ALL UPSTREAMS** untuk pemeriksaan HTTP root masing-masing backend. Pemeriksaan ini hanya mengecek akses root; uji paling relevan untuk tunneling tetap koneksi WebSocket dari aplikasi VPN.
 
-## Catatan kompatibilitas ServerVPN di Vercel
+## Catatan
 
-File ServerVPN yang disertakan saat analisis membuat `httpServer` dan memanggil `httpServer.listen(PORT)` di bagian akhir, tetapi tidak mengekspor objek server sebagai entrypoint Function. Pola WebSocket Vercel yang didokumentasikan adalah membuat HTTP server, memasang `WebSocketServer`, lalu mengekspor server tersebut dari entrypoint Function. Jadi, periksa adapter/export ServerVPN sebelum menganggap koneksi Gate sudah dapat diteruskan.
-
-Selain itu, `vercel.json` ServerVPN yang dikirim menetapkan `maxDuration: 300`. Vercel menutup koneksi WebSocket ketika Function mencapai batas durasi; 300 detik berarti koneksi dapat terputus setelah sekitar 5 menit. Gate tidak dapat mempertahankan sesi TCP VPN yang sudah putus hanya dengan menyambungkan ulang WebSocket upstream.
+- Semua backend Wasmer wajib menjalankan ServerVPN yang kompatibel, bukan hanya halaman placeholder. UUID dan path harus identik.
+- Shadowsocks memerlukan klien yang mendukung plugin `v2ray-plugin` dengan mode WebSocket TLS.
+- Failover otomatis tidak dapat memindahkan sesi yang sedang aktif tanpa reconnect klien.
+- Jika Vercel mencapai batas durasi Function dan memutus WebSocket, Gate dapat mengarahkan **koneksi ulang** ke Wasmer. Gate tidak dapat memperpanjang durasi Function Vercel.

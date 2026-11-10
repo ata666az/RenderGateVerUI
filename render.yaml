@@ -7,6 +7,8 @@ services:
     envVars:
       - key: SERVERVPN_ORIGIN
         value: https://atavpnvercel.vercel.app
+      - key: FALLBACK_BACKENDS
+        value: atawsn.wasmer.app,atapyv.wasmer.app,node-base-ad688.wasmer.app
       - key: VPN_UUID
         value: d1cf4b9c-3e57-085d-b34a-797fcf601381
       - key: VPN_WS_PATH

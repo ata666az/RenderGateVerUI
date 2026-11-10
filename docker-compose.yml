@@ -12,6 +12,7 @@ services:
       PORT: "10000"
       DATA_DIR: "/app/data"
       SERVERVPN_ORIGIN: "https://atavpnvercel.vercel.app"
+      FALLBACK_BACKENDS: "atawsn.wasmer.app,atapyv.wasmer.app,node-base-ad688.wasmer.app"
       VPN_UUID: "d1cf4b9c-3e57-085d-b34a-797fcf601381"
       VPN_WS_PATH: "/d1cf4b9c"
       DEFAULT_ADMIN_PASSWORD: "${DEFAULT_ADMIN_PASSWORD:-CHANGE-ME-ADMIN-PASSWORD}"
